@@ -29,9 +29,12 @@ from tqdm import tqdm
 from scipy import stats
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 
+
 def data_preprocess(
-    file_name: str, 
-    max_seq_len: int, 
+    file_name: str,
+    ts_column_name: str,
+    id_column_name: str,
+    max_seq_len: int,
     padding_value: float=-1.0,
     impute_method: str="mode", 
     scaling_method: str="minmax", 
@@ -46,6 +49,8 @@ def data_preprocess(
 
     Args:
     - file_name (str): CSV file name
+    - ts_column_name (str): name of Time Series column in the training data
+    - id_column_name (str): name of ID column in the training data
     - max_seq_len (int): maximum sequence length
     - impute_method (str): The imputation method ("median" or "mode") 
     - scaling_method (str): The scaler method ("standard" or "minmax")
@@ -60,30 +65,24 @@ def data_preprocess(
     # Load data
     #########################
 
-    index = 'Idx'
-
     # Load csv
-    print("Loading data...\n")
-    ori_data = pd.read_csv(file_name)
-
-    # Remove spurious column, so that column 0 is now 'admissionid'.
-    if ori_data.columns[0] == "Unnamed: 0":  
-        ori_data = ori_data.drop(["Unnamed: 0"], axis=1)
+    print("Loading data as DataFrame...\n")
+    original_data = pd.read_csv(file_name)
 
     #########################
     # Remove outliers from dataset
     #########################
     
-    no = ori_data.shape[0]
-    z_scores = stats.zscore(ori_data, axis=0, nan_policy='omit')
+    total_records = original_data.shape[0]
+    z_scores = stats.zscore(original_data, axis=0, nan_policy='omit')
     z_filter = np.nanmax(np.abs(z_scores), axis=1) < 3
-    ori_data = ori_data[z_filter]
-    print(f"Dropped {no - ori_data.shape[0]} rows (outliers)\n")
+    original_data = original_data[z_filter]
+    print(f"Dropped {total_records - original_data.shape[0]} records (outliers)\n")
 
     # Parameters
-    uniq_id = np.unique(ori_data[index])
-    no = len(uniq_id)
-    dim = len(ori_data.columns) - 1
+    unique_ids = np.unique(original_data[id_column_name])
+    ids_count = len(unique_ids)
+    dim = len(original_data.columns) - 1
 
     #########################
     # Impute, scale and pad data
@@ -92,19 +91,19 @@ def data_preprocess(
     # Initialize scaler
     if scaling_method == "minmax":
         scaler = MinMaxScaler()
-        scaler.fit(ori_data)
+        scaler.fit(original_data)
         params = [scaler.data_min_, scaler.data_max_]
     
     elif scaling_method == "standard":
         scaler = StandardScaler()
-        scaler.fit(ori_data)
+        scaler.fit(original_data)
         params = [scaler.mean_, scaler.var_]
 
     # Imputation values
     if impute_method == "median":
-        impute_vals = ori_data.median()
+        impute_vals = original_data.median()
     elif impute_method == "mode":
-        impute_vals = stats.mode(ori_data).mode[0]
+        impute_vals = stats.mode(original_data).mode[0]
     else:
         raise ValueError("Imputation method should be `median` or `mode`")    
 
@@ -115,34 +114,34 @@ def data_preprocess(
     #     print(f"Changed padding value to: {padding_value}\n")
     
     # Output initialization
-    output = np.empty([no, max_seq_len, dim])  # Shape:[no, max_seq_len, dim]
+    output = np.empty([ids_count, max_seq_len, dim])  # Shape:[no, max_seq_len, dim]
     output.fill(padding_value)
     time = []
 
     # For each uniq id
-    for i in tqdm(range(no)):
-        # Extract the time-series data with a certain admissionid
-
-        curr_data = ori_data[ori_data[index] == uniq_id[i]].to_numpy()
+    for i in tqdm(range(ids_count)):
+        # Extract the time-series data with a certain id_column_name
+        id_data = original_data[original_data[id_column_name] == unique_ids[i]].to_numpy()
 
         # Impute missing data
-        curr_data = imputer(curr_data, impute_vals)
+        id_data = imputer(id_data, impute_vals)
 
         # Normalize data
-        curr_data = scaler.transform(curr_data)
+        id_data = scaler.transform(id_data)
         
         # Extract time and assign to the preprocessed data (Excluding ID)
-        curr_no = len(curr_data)
+        ts_len = len(id_data)
 
         # Pad data to `max_seq_len`
-        if curr_no >= max_seq_len:
-            output[i, :, :] = curr_data[:max_seq_len, 1:]  # Shape: [1, max_seq_len, dim]
+        if ts_len >= max_seq_len:
+            output[i, :, :] = id_data[:max_seq_len, 1:]  # Shape: [1, max_seq_len, dim]
             time.append(max_seq_len)
         else:
-            output[i, :curr_no, :] = curr_data[:, 1:]  # Shape: [1, max_seq_len, dim]
-            time.append(curr_no)
+            output[i, :ts_len, :] = id_data[:, 1:]  # Shape: [1, max_seq_len, dim]
+            time.append(ts_len)
 
     return output, time, params, max_seq_len, padding_value
+
 
 def imputer(
     curr_data: np.ndarray, 
