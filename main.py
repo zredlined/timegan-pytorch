@@ -23,6 +23,7 @@ from metrics.metric_utils import (
 from models.timegan import TimeGAN
 from models.utils import timegan_trainer, timegan_generator
 
+
 def main(args):
     ##############################################
     # Initialize output directories
@@ -33,12 +34,21 @@ def main(args):
     if not os.path.exists(code_dir):
         raise ValueError(f"Code directory not found at {code_dir}.")
 
-    ## Data directory
-    data_path = os.path.abspath("./data")
-    if not os.path.exists(data_path):
-        raise ValueError(f"Data file not found at {data_path}.")
-    data_dir = os.path.dirname(data_path)
-    data_file_name = os.path.basename(data_path)
+    # Training data
+    training_file_path = os.path.abspath(f"{args.training_file}")
+    if not os.path.exists(training_file_path):
+        raise ValueError(f"Training file not found at {training_file_path}.")
+    data_dir = os.path.dirname(training_file_path)
+
+    # ID column name
+    id_column_name = f"{args.id_column_name}"
+    if len(id_column_name) < 1:
+        raise ValueError(f"Please specify an ID column name `id_column_name`")
+
+    # TS column name
+    ts_column_name = f"{args.ts_column_name}"
+    if len(ts_column_name) < 1:
+        raise ValueError(f"Please specify a Time Series column name `ts_column_name`")
 
     ## Output directories
     args.model_path = os.path.abspath(f"./output/{args.exp}/")
@@ -52,7 +62,7 @@ def main(args):
         os.makedirs(tensorboard_path, exist_ok=True)
 
     print(f"\nCode directory:\t\t\t{code_dir}")
-    print(f"Data directory:\t\t\t{data_path}")
+    print(f"Training file:\t\t\t{training_file_path}")
     print(f"Output directory:\t\t{out_dir}")
     print(f"TensorBoard directory:\t\t{tensorboard_path}\n")
 
@@ -68,7 +78,6 @@ def main(args):
     if args.device == "cuda" and torch.cuda.is_available():
         print("Using CUDA\n")
         args.device = torch.device("cuda:0")
-        # torch.cuda.manual_seed_all(args.seed)
         torch.cuda.manual_seed(args.seed)
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
@@ -80,20 +89,19 @@ def main(args):
     # Load and preprocess data for model
     #########################
 
-    data_path = "data/stock.csv"
-    X, T, _, args.max_seq_len, args.padding_value = data_preprocess(
-        data_path, args.max_seq_len
+    output, time_list, _, args.max_seq_len, args.padding_value = data_preprocess(
+        training_file_path, ts_column_name, id_column_name, args.max_seq_len
     )
 
-    print(f"Processed data: {X.shape} (Idx x MaxSeqLen x Features)\n")
-    print(f"Original data preview:\n{X[:2, :10, :2]}\n")
+    print(f"Processed data: {output.shape} ({args.id_column_name} x MaxSeqLen x Features)\n")
+    print(f"Original data preview:\n{output[:2, :10, :2]}\n")
 
-    args.feature_dim = X.shape[-1]
-    args.Z_dim = X.shape[-1]
+    args.feature_dim = output.shape[-1]
+    args.Z_dim = output.shape[-1]
 
     # Train-Test Split data and time
     train_data, test_data, train_time, test_time = train_test_split(
-        X, T, test_size=args.train_rate, random_state=args.seed
+        output, time_list, test_size=args.train_rate, random_state=args.seed
     )
 
     #########################
@@ -232,6 +240,18 @@ if __name__ == "__main__":
         type=int)
 
     # Data Arguments
+    parser.add_argument(
+        '--training_file',
+        default="./data/stock.csv",
+        type=str)
+    parser.add_argument(
+        '--ts_column_name',
+        default="Date",
+        type=str)
+    parser.add_argument(
+        '--id_column_name',
+        default="Idx",
+        type=str)
     parser.add_argument(
         '--max_seq_len',
         default=100,
